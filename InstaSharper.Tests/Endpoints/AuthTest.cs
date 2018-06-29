@@ -56,8 +56,8 @@ namespace InstaSharper.Tests.Endpoints
         [Fact]
         public async void UserLoginSuccessTest()
         {
-            var username = "alex_codegarage";
-            var password = Environment.GetEnvironmentVariable("instaapiuserpassword");
+            var username = "";
+            var password = "";
 
             var apiInstance = TestHelpers.GetDefaultInstaApiInstance(new UserSessionData
             {
@@ -69,6 +69,15 @@ namespace InstaSharper.Tests.Endpoints
             var loginResult = await apiInstance.LoginAsync();
             Assert.True(loginResult.Succeeded);
             Assert.True(apiInstance.IsUserAuthenticated);
+
+            var apiInstance2 = TestHelpers.GetDefaultInstaApiInstance(new UserSessionData
+            {
+                UserName = username,
+                Password = password
+            });
+            var loginResult2 = await apiInstance2.LoginAsync();
+            Assert.True(loginResult2.Succeeded);
+            Assert.Equal(loginResult2.Info.Message, "Session is valid");
         }
     }
 }

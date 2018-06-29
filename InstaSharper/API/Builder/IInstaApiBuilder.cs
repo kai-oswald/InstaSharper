@@ -1,4 +1,5 @@
 using System.Net.Http;
+using InstaSharper.API.Session;
 using InstaSharper.Classes;
 using InstaSharper.Classes.Android.DeviceInfo;
 using InstaSharper.Logger;
@@ -33,6 +34,13 @@ namespace InstaSharper.API.Builder
         /// <param name="handler">HttpClientHandler</param>
         /// <returns>API Builder</returns>
         IInstaApiBuilder UseHttpClientHandler(HttpClientHandler handler);
+
+        /// <summary>
+        ///  Use custom session storage
+        /// </summary>
+        /// <param name="storage">ISessionStorage implementation</param>
+        /// <returns>API Builder</returns>
+        IInstaApiBuilder UseStorage(ISessionStorage storage);
 
 
         /// <summary>

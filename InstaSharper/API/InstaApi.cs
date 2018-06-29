@@ -1,10 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
 using InstaSharper.API.Processors;
+using InstaSharper.API.Session;
 using InstaSharper.Classes;
 using InstaSharper.Classes.Android.DeviceInfo;
 using InstaSharper.Classes.Models;
@@ -37,6 +39,8 @@ namespace InstaSharper.API
         private UserSessionData _user;
         private IUserProcessor _userProcessor;
 
+        private readonly ISessionStorage _storage;
+
         public InstaApi(UserSessionData user, IInstaLogger logger, AndroidDevice deviceInfo,
             IHttpRequestProcessor httpRequestProcessor)
         {
@@ -44,6 +48,8 @@ namespace InstaSharper.API
             _logger = logger;
             _deviceInfo = deviceInfo;
             _httpRequestProcessor = httpRequestProcessor;
+            _storage = httpRequestProcessor.Storage;
+            IsMaybeAuthenticated = _storage.Exists;
         }
 
         /// <summary>
@@ -836,6 +842,12 @@ namespace InstaSharper.API
         ///     Indicates whether user authenticated or not
         /// </summary>
         public bool IsUserAuthenticated { get; private set; }
+
+        /// <summary>
+        /// Our guess if the user could already be authenticated with existing session
+        /// </summary>
+        public bool IsMaybeAuthenticated { get; private set; }
+
         /// <summary>
         ///     Create a new instagram account
         /// </summary>
@@ -887,65 +899,118 @@ namespace InstaSharper.API
         {
             ValidateUser();
             ValidateRequestMessage();
-            try
+
+            return await LoginAsync(false);
+        }
+
+        /// <summary>
+        /// Internal login handler
+        /// </summary>
+        /// <param name="forceLogin">force login instead of resuming previous session.</param>
+        /// <returns></returns>
+        protected async Task<IResult<InstaLoginResult>> LoginAsync(bool forceLogin = false)
+        {
+            ValidateUser();
+            ValidateRequestMessage();
+
+            // perform full relogin if necessary
+            if (!IsMaybeAuthenticated || forceLogin)
             {
-                var firstResponse = await _httpRequestProcessor.GetAsync(_httpRequestProcessor.Client.BaseAddress);
-                var cookies =
-                    _httpRequestProcessor.HttpHandler.CookieContainer.GetCookies(_httpRequestProcessor.Client
-                        .BaseAddress);
-                _logger?.LogResponse(firstResponse);
-                var csrftoken = cookies[InstaApiConstants.CSRFTOKEN]?.Value ?? String.Empty;
-                _user.CsrfToken = csrftoken;
-                var instaUri = UriCreator.GetLoginUri();
-                var signature =
-                    $"{_httpRequestProcessor.RequestMessage.GenerateSignature(InstaApiConstants.IG_SIGNATURE_KEY)}.{_httpRequestProcessor.RequestMessage.GetMessageString()}";
-                var fields = new Dictionary<string, string>
+                try
+                {
+                    var firstResponse = await _httpRequestProcessor.GetAsync(_httpRequestProcessor.Client.BaseAddress);
+                    var cookies =
+                        _httpRequestProcessor.HttpHandler.CookieContainer.GetCookies(_httpRequestProcessor.Client
+                            .BaseAddress);
+                    _logger?.LogResponse(firstResponse);
+                    var csrftoken = cookies[InstaApiConstants.CSRFTOKEN]?.Value ?? String.Empty;
+                    _user.CsrfToken = csrftoken;
+                    var instaUri = UriCreator.GetLoginUri();
+                    var signature =
+                        $"{_httpRequestProcessor.RequestMessage.GenerateSignature(InstaApiConstants.IG_SIGNATURE_KEY)}.{_httpRequestProcessor.RequestMessage.GetMessageString()}";
+                    var fields = new Dictionary<string, string>
                 {
                     {InstaApiConstants.HEADER_IG_SIGNATURE, signature},
                     {InstaApiConstants.HEADER_IG_SIGNATURE_KEY_VERSION, InstaApiConstants.IG_SIGNATURE_KEY_VERSION}
                 };
-                var request = HttpHelper.GetDefaultRequest(HttpMethod.Post, instaUri, _deviceInfo);
-                request.Content = new FormUrlEncodedContent(fields);
-                request.Properties.Add(InstaApiConstants.HEADER_IG_SIGNATURE, signature);
-                request.Properties.Add(InstaApiConstants.HEADER_IG_SIGNATURE_KEY_VERSION, InstaApiConstants.IG_SIGNATURE_KEY_VERSION);
-                var response = await _httpRequestProcessor.SendAsync(request);
-                var json = await response.Content.ReadAsStringAsync();
-                if (response.StatusCode != HttpStatusCode.OK) //If the password is correct BUT 2-Factor Authentication is enabled, it will still get a 400 error (bad request)
-                {
-                    //Then check it
-                    var loginFailReason = JsonConvert.DeserializeObject<InstaLoginBaseResponse>(json);
-
-                    if (loginFailReason.InvalidCredentials)
-                        return Result.Fail("Invalid Credentials",
-                            loginFailReason.ErrorType == "bad_password"
-                                ? InstaLoginResult.BadPassword
-                                : InstaLoginResult.InvalidUser);
-                    if (loginFailReason.TwoFactorRequired)
+                    var request = HttpHelper.GetDefaultRequest(HttpMethod.Post, instaUri, _deviceInfo);
+                    request.Content = new FormUrlEncodedContent(fields);
+                    request.Properties.Add(InstaApiConstants.HEADER_IG_SIGNATURE, signature);
+                    request.Properties.Add(InstaApiConstants.HEADER_IG_SIGNATURE_KEY_VERSION, InstaApiConstants.IG_SIGNATURE_KEY_VERSION);
+                    var response = await _httpRequestProcessor.SendAsync(request);
+                    var json = await response.Content.ReadAsStringAsync();
+                    if (response.StatusCode != HttpStatusCode.OK) //If the password is correct BUT 2-Factor Authentication is enabled, it will still get a 400 error (bad request)
                     {
-                        _twoFactorInfo = loginFailReason.TwoFactorLoginInfo;
-                        //2FA is required!
-                        return Result.Fail("Two Factor Authentication is required", InstaLoginResult.TwoFactorRequired);
+                        //Then check it
+                        var loginFailReason = JsonConvert.DeserializeObject<InstaLoginBaseResponse>(json);
+
+                        if (loginFailReason.InvalidCredentials)
+                            return Result.Fail("Invalid Credentials",
+                                loginFailReason.ErrorType == "bad_password"
+                                    ? InstaLoginResult.BadPassword
+                                    : InstaLoginResult.InvalidUser);
+                        if (loginFailReason.TwoFactorRequired)
+                        {
+                            _twoFactorInfo = loginFailReason.TwoFactorLoginInfo;
+                            //2FA is required!
+                            return Result.Fail("Two Factor Authentication is required", InstaLoginResult.TwoFactorRequired);
+                        }
+
+                        return Result.UnExpectedResponse<InstaLoginResult>(response, json);
                     }
 
-                    return Result.UnExpectedResponse<InstaLoginResult>(response, json);
-                }
+                    var loginInfo = JsonConvert.DeserializeObject<InstaLoginResponse>(json);
+                    IsUserAuthenticated = loginInfo.User?.UserName.ToLower() == _user.UserName.ToLower();
 
-                var loginInfo = JsonConvert.DeserializeObject<InstaLoginResponse>(json);
-                IsUserAuthenticated = loginInfo.User?.UserName.ToLower() == _user.UserName.ToLower();
-                var converter = ConvertersFabric.Instance.GetUserShortConverter(loginInfo.User);
-                _user.LoggedInUder = converter.Convert();
-                _user.RankToken = $"{_user.LoggedInUder.Pk}_{_httpRequestProcessor.RequestMessage.phone_id}";
-                return Result.Success(InstaLoginResult.Success);
+                    _httpRequestProcessor.SaveCookieJar();
+                    IsMaybeAuthenticated = true;
+                    var converter = ConvertersFabric.Instance.GetUserShortConverter(loginInfo.User);
+                    _user.LoggedInUder = converter.Convert();
+                    _user.RankToken = $"{_user.LoggedInUder.Pk}_{_httpRequestProcessor.RequestMessage.phone_id}";
+                    return await SendLoginFlow(false);
+                }
+                catch (Exception exception)
+                {
+                    LogException(exception);
+                    return Result.Fail(exception, InstaLoginResult.Exception);
+                }
+                finally
+                {
+                    InvalidateProcessors();
+                }
             }
-            catch (Exception exception)
+
+            // Attempt to resume the session or full re-login if necessary.
+            return await SendLoginFlow(false);
+
+        }
+
+        protected async Task<IResult<InstaLoginResult>> SendLoginFlow(bool justLoggedIn)
+        {
+            if (justLoggedIn)
             {
-                LogException(exception);
-                return Result.Fail(exception, InstaLoginResult.Exception);
+                // fetch timeline, searches, inbox etc... what you'll do with normal app use
             }
-            finally
+            else
             {
                 InvalidateProcessors();
+
+                // try to get the timeline with existing session -> this simulates default instagram behaviour
+                var timelineResult = await GetUserTimelineFeedAsync(PaginationParameters.MaxPagesToLoad(1));
+                if (!timelineResult.Succeeded)
+                {
+                    if (timelineResult.Info.Message == "login_required")
+                    {
+                        return await LoginAsync(true); // session expired -> perform a fresh login
+                    }
+                    else
+                    {
+                        return Result.Fail(timelineResult.Info.Exception, InstaLoginResult.Exception);
+                    }
+                }
+
             }
+            return Result.Success("Session is valid", InstaLoginResult.Success);
         }
 
         /// <summary>
@@ -1121,7 +1186,7 @@ namespace InstaSharper.API
 
         private void ValidateLoggedIn()
         {
-            if (!IsUserAuthenticated)
+            if (!IsMaybeAuthenticated)
                 throw new ArgumentException("user must be authenticated");
         }
 

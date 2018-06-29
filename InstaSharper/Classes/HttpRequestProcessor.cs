@@ -1,6 +1,10 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
+using InstaSharper.API.Session;
 using InstaSharper.Classes.Android.DeviceInfo;
 using InstaSharper.Logger;
 
@@ -12,18 +16,53 @@ namespace InstaSharper.Classes
         private readonly IInstaLogger _logger;
 
         public HttpRequestProcessor(IRequestDelay delay, HttpClient httpClient, HttpClientHandler httpHandler,
-            ApiRequestMessage requestMessage, IInstaLogger logger)
+            ApiRequestMessage requestMessage, IInstaLogger logger, ISessionStorage storage)
         {
             _delay = delay;
             Client = httpClient;
             HttpHandler = httpHandler;
             RequestMessage = requestMessage;
             _logger = logger;
+            CookieContainer = new CookieContainer();
+            HttpHandler.CookieContainer = CookieContainer;
+            Storage = storage;
+            LoadCookieJar();
         }
+        public ISessionStorage Storage { get; }
 
         public HttpClientHandler HttpHandler { get; }
         public ApiRequestMessage RequestMessage { get; }
         public HttpClient Client { get; }
+
+        public CookieContainer CookieContainer { get; set; }
+
+        public DateTime LastUpdated { get; private set; }
+
+        public DateTime LastLoaded { get; private set; }
+
+        public void SaveCookieJar()
+        {
+            var sessionCookies = CookieContainer.GetCookies(Client.BaseAddress);
+            Storage.Persist(sessionCookies.Cast<Cookie>());
+
+            LastUpdated = DateTime.Now;
+        }
+
+        public void LoadCookieJar()
+        {
+            CookieContainer = new CookieContainer();
+
+            var cookies = Storage.Get();
+
+            cookies
+                .ToList()
+                .ForEach(c =>
+                {
+                    CookieContainer.Add(Client.BaseAddress, c);
+                });
+
+            LastLoaded = DateTime.Now;
+        }
 
         public async Task<HttpResponseMessage> SendAsync(HttpRequestMessage requestMessage)
         {
@@ -67,7 +106,7 @@ namespace InstaSharper.Classes
             return await response.Content.ReadAsStringAsync();
         }
 
-        public async Task<string> GeJsonAsync(Uri requestUri)
+        public async Task<string> GetJsonAsync(Uri requestUri)
         {
             _logger?.LogRequest(requestUri);
             if (_delay.Exist)

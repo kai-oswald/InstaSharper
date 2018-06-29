@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Net.Http;
+using InstaSharper.API.Session;
 using InstaSharper.Classes;
 using InstaSharper.Classes.Android.DeviceInfo;
 using InstaSharper.Logger;
@@ -16,6 +17,7 @@ namespace InstaSharper.API.Builder
         private IInstaLogger _logger;
         private ApiRequestMessage _requestMessage;
         private UserSessionData _user;
+        private ISessionStorage _storage;
 
         private InstaApiBuilder()
         {
@@ -33,7 +35,7 @@ namespace InstaSharper.API.Builder
             if (_user == null)
                 throw new ArgumentNullException("User auth data must be specified");
             if (_httpClient == null)
-                _httpClient = new HttpClient(_httpHandler) {BaseAddress = new Uri(InstaApiConstants.INSTAGRAM_URL)};
+                _httpClient = new HttpClient(_httpHandler) { BaseAddress = new Uri(InstaApiConstants.INSTAGRAM_URL) };
 
             if (_requestMessage == null)
             {
@@ -55,9 +57,12 @@ namespace InstaSharper.API.Builder
                 _device = AndroidDeviceGenerator.GetById(_requestMessage.device_id);
             if (_device == null) AndroidDeviceGenerator.GetRandomAndroidDevice();
 
+            if (_storage == null)
+                _storage = new FileSessionStorage(_user?.UserName);
+
             if (_httpRequestProcessor == null)
                 _httpRequestProcessor =
-                    new HttpRequestProcessor(_delay, _httpClient, _httpHandler, _requestMessage, _logger);
+                    new HttpRequestProcessor(_delay, _httpClient, _httpHandler, _requestMessage, _logger, _storage);
 
             var instaApi = new InstaApi(_user, _logger, _device, _httpRequestProcessor);
             return instaApi;
@@ -73,6 +78,12 @@ namespace InstaSharper.API.Builder
         public IInstaApiBuilder UseLogger(IInstaLogger logger)
         {
             _logger = logger;
+            return this;
+        }
+
+        public IInstaApiBuilder UseStorage(ISessionStorage storage)
+        {
+            _storage = storage;
             return this;
         }
 
