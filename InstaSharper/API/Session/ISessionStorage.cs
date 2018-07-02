@@ -7,8 +7,8 @@ namespace InstaSharper.API.Session
 {
     public interface ISessionStorage
     {
-        IEnumerable<Cookie> Get();
-        void Persist(IEnumerable<Cookie> cookies);
+        SessionData Get();
+        void Persist(SessionData sessionData);
         bool Exists { get; }
 
     }

@@ -43,16 +43,21 @@ namespace InstaSharper.Classes
         public void SaveCookieJar()
         {
             var sessionCookies = CookieContainer.GetCookies(Client.BaseAddress);
-            Storage.Persist(sessionCookies.Cast<Cookie>());
+
+            SessionData sessionData = Storage.Exists ? Storage.Get() : new SessionData();
+            sessionData.Cookies = sessionCookies.Cast<Cookie>();
+            Storage.Persist(sessionData);
 
             LastUpdated = DateTime.Now;
         }
 
         public void LoadCookieJar()
         {
-            CookieContainer = new CookieContainer();
+            if (!Storage.Exists)
+                return; // nothing to load
 
-            var cookies = Storage.Get();
+            CookieContainer = new CookieContainer();
+            var cookies = Storage.Get().Cookies;
 
             cookies
                 .ToList()

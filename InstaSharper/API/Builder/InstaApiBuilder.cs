@@ -37,9 +37,25 @@ namespace InstaSharper.API.Builder
             if (_httpClient == null)
                 _httpClient = new HttpClient(_httpHandler) { BaseAddress = new Uri(InstaApiConstants.INSTAGRAM_URL) };
 
-            if (_requestMessage == null)
+            if (_storage == null)
+                _storage = new FileSessionStorage(_user?.UserName);
+
+            if (_storage.Exists)
+            {
+                _device = _storage.Get().Device;
+            }
+            else
             {
                 _device = AndroidDeviceGenerator.GetRandomAndroidDevice();
+
+                // Persist the device for re-use
+                SessionData data = new SessionData();
+                data.Device = _device;
+                _storage.Persist(data);
+            }
+
+            if (_requestMessage == null)
+            {
                 _requestMessage = new ApiRequestMessage
                 {
                     phone_id = _device.PhoneGuid.ToString(),
@@ -57,8 +73,6 @@ namespace InstaSharper.API.Builder
                 _device = AndroidDeviceGenerator.GetById(_requestMessage.device_id);
             if (_device == null) AndroidDeviceGenerator.GetRandomAndroidDevice();
 
-            if (_storage == null)
-                _storage = new FileSessionStorage(_user?.UserName);
 
             if (_httpRequestProcessor == null)
                 _httpRequestProcessor =

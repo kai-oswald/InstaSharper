@@ -19,13 +19,14 @@ namespace InstaSharper.API.Session
 
         public bool Exists => File.Exists(Path);
 
-        public IEnumerable<Cookie> Get()
+        public SessionData Get()
         {
-            return JsonConvert.DeserializeObject<List<System.Net.Cookie>>(File.ReadAllText(Path));
+            return JsonConvert.DeserializeObject<SessionData>(File.ReadAllText(Path));
         }
-        public void Persist(IEnumerable<Cookie> cookies)
+
+        public void Persist(SessionData sessionData)
         {
-            File.WriteAllText(Path, JsonConvert.SerializeObject(cookies));
+            File.WriteAllText(Path, JsonConvert.SerializeObject(sessionData));
         }
     }
 }
